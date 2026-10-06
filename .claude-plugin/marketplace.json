@@ -1,0 +1,7 @@
+{
+  "name": "herdr-sbx",
+  "owner": { "name": "Jimmy Vo" },
+  "plugins": [
+    { "name": "herdr-sbx", "source": "./", "description": "Sandboxed coding agents in herdr tabs, plus a plan orchestration skill." }
+  ]
+}

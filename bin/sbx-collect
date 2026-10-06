@@ -1,0 +1,38 @@
+#!/usr/bin/env zsh
+# Commit a task's work inside its sandbox, fetch the branch, run the check in a fresh sandbox, and report status as JSON.
+# Output is limited to paths, a commit hash and exit codes: nothing the agent wrote as prose reaches the caller.
+set -euo pipefail
+(( $# == 6 || $# == 7 )) || { echo "usage: sbx-collect <worker-repo> <sandbox> <branch> <base> <files-file> <message> [check-cmd]" >&2; exit 2; }
+repo=${1:A} name=$2 branch=$3 base=$4 files=$5 msg=$6 check=${7:-}
+arr() { (( $# )) && printf '%s\n' "$@" | jq -R . | jq -sc . || echo '[]'; }
+
+on=$(sbx exec "$name" git -C "$repo" rev-parse --abbrev-ref HEAD)
+[[ $on == "$branch" ]] || { echo "sandbox $name is on '$on', expected '$branch'" >&2; exit 1; }
+gname=$(git -C "$repo" config user.name) gmail=$(git -C "$repo" config user.email)
+sbx exec -e GIT_AUTHOR_NAME="$gname" -e GIT_AUTHOR_EMAIL="$gmail" -e GIT_COMMITTER_NAME="$gname" -e GIT_COMMITTER_EMAIL="$gmail" \
+  "$name" sh -c 'cd "$1" && git add -A && { git diff --cached --quiet || git commit -qm "$2"; }' _ "$repo" "$msg"
+
+git -C "$repo" fetch -q "sandbox-$name"
+head=refs/sandboxes/$name/$branch   # sbx drops the sandbox-<name> remote, and refs/remotes with it, when the VM stops
+commit=$(git -C "$repo" rev-parse "$head")
+
+log=${TMPDIR:-/tmp}/sbx-collect-$name.log check_exit=null
+if [[ -n $check ]]; then   # the log is for a human; the caller gets only the exit code
+  # Not in the agent's VM: there the agent controlled gitignored files (node_modules, PATH shims)
+  # that neither the diff nor the review sees.
+  check_exit=$("${0:A:h}/sbx-check" "$repo" "$commit" "$name-check" "$check" "$log")
+fi
+
+changed=(${(f)"$(git -C "$repo" diff --name-only "$base...$head")"})
+declared=(${(f)"$(<"$files")"})
+out=()
+for f in $changed; do   # a declared entry ending in / covers everything below it
+  ok=0; for d in $declared; do [[ $f == "$d" || ( $d == */ && $f == "$d"* ) ]] && { ok=1; break; }; done
+  (( ok )) || out+=$f
+done
+risky=(${(f)"$(printf '%s\n' $changed | grep -E "$(<${0:A:h}/../lib/host-exec-paths.regex)" || true)"})
+
+jq -nc --arg sandbox "$name" --arg branch "$branch" --arg commit "$commit" \
+  --argjson changed "$(arr $changed)" --argjson out_of_scope "$(arr $out)" --argjson host_exec "$(arr $risky)" \
+  --argjson check_exit "$check_exit" --arg check_log "$log" \
+  '{sandbox:$sandbox, branch:$branch, commit:$commit, changed:$changed, out_of_scope:$out_of_scope, host_exec:$host_exec, check_exit:$check_exit, check_log:$check_log}'

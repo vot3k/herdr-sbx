@@ -1,0 +1,13 @@
+#!/usr/bin/env zsh
+# Fetch a clone-mode sandbox's branches; flag changed files that would execute on the host once merged.
+set -euo pipefail
+name=${1:?usage: sbx-review <sandbox> [base]}; base=${2:-main}
+git fetch "sandbox-$name"   # fails if the sandbox is stopped: sbx exec <sandbox> true
+for ref in $(git for-each-ref --format='%(refname:short)' "refs/remotes/sandbox-$name/"); do
+  [[ $ref == */* ]] || continue   # skip the remote's symbolic HEAD
+  echo "## $ref"; git diff --stat "$base...$ref"
+  # ponytail: path heuristic, not a guarantee; read the full diff for anything you will run
+  git diff --name-only "$base...$ref" |
+    grep -E "$(<${0:A:h}/../lib/host-exec-paths.regex)" |
+    sed 's/^/  !! runs on host: /' || true
+done

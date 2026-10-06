@@ -1,0 +1,71 @@
+#!/usr/bin/env zsh
+# Launch one task: a fresh clone-mode sandbox on <branch> cut from <base>, brief copied in, agent prompted.
+# Prints {"sandbox","pane","branch"} as JSON and returns without waiting for the agent to finish.
+set -euo pipefail
+usage="usage: sbx-dispatch [--workspace <id> | --split <pane>] <worker-repo> <sandbox> <branch> <base> <brief-file> [agent]"
+# Placement: --workspace puts the task's tab in a run's own workspace; --split puts this sandbox in a
+# pane beside <pane>, so a reviewer sits next to its worker. Default: a tab in the caller's workspace.
+zparseopts -D -F -- -workspace:=ws -split:=sp 2>/dev/null || { echo "$usage" >&2; exit 2; }
+(( $#ws == 0 || $#sp == 0 )) || { echo "$usage" >&2; exit 2; }
+(( $# == 5 || $# == 6 )) || { echo "$usage" >&2; exit 2; }
+repo=${1:A} name=$2 branch=$3 base=$4 brief=$5 agent=${6:-pi}
+[[ -f $brief ]] || { echo "brief not found: $brief" >&2; exit 2; }
+# Refresh <base> from origin when origin has it; git refuses when <base> is checked out, which keeps
+# this off a working checkout. A local-only base (e.g. a collected commit under review) is used as is.
+if git -C "$repo" ls-remote -q --exit-code origin "refs/heads/${base}" >/dev/null; then
+  git -C "$repo" fetch -q origin "+refs/heads/${base}:refs/heads/${base}"
+else
+  git -C "$repo" rev-parse -q --verify "refs/heads/${base}" >/dev/null || { echo "base ${base} is on neither origin nor local" >&2; exit 1; }
+fi
+# An agent with a kit in this repo (pi) runs from it; the rest are sbx built-ins (claude, codex, cursor).
+target=$agent; [[ -f ${0:A:h:h}/kits/$agent/spec.yaml ]] && target=${0:A:h:h}/kits/$agent
+# `; exit` closes the tab (or split pane) once `sbx run` ends, e.g. after `sbx rm -f`.
+if (( $#sp )); then
+  pane=$(herdr pane split "${sp[2]}" --direction right --cwd "$repo" --no-focus | jq -er .result.pane.pane_id)
+else
+  pane=$(herdr tab create ${ws:+--workspace} ${ws:+${ws[2]}} --cwd "$repo" --label "$name" --no-focus | jq -er .result.root_pane.pane_id)
+fi
+# Codex's update menu blocks its input on any launch after the first wrote version.json, and the
+# image is the only update path, so turn the check off. Verified on codex-cli 0.149.1.
+agent_args=(); [[ $agent == codex ]] && agent_args=(-- -c check_for_update_on_startup=false)
+herdr pane run "$pane" "HERDR_AGENT=$agent sbx run --clone --name $name $target . ${agent_args[*]}; exit"
+# Ready means the sandbox exists AND its agent is idle: with the HERDR_AGENT hint, herdr reports
+# `idle` for the wrapper while sbx is still pulling the image, before any sandbox exists.
+for i in {1..120}; do   # ponytail: 10 min cap covers a first-run image pull (~830 MB for codex)
+  sbx exec "$name" true >/dev/null 2>&1 && [[ $(herdr pane get "$pane" | jq -r .result.pane.agent_status) == idle ]] && break
+  (( i < 120 )) || { echo "agent not ready in pane $pane" >&2; exit 1; }
+  sleep 5
+done
+# Codex opens a fresh clone on "Do you trust the contents of this directory?", which herdr reports as
+# idle, so the prompt below would land in the dialog. A `-c projects…trust_level` override does not
+# satisfy it; only the persisted answer does. The VM is the trust boundary, so accept the default
+# "Yes, continue" (only other choice: quit) and wait for the dialog to clear before prompting.
+# Done when codex's session header ("OpenAI Codex (vX)") is drawn: the dialog can render after idle.
+if [[ $agent == codex ]]; then
+  for i in {1..24}; do
+    screen=$(herdr pane read "$pane" --source visible --lines 40)   # captured, not piped: grep -q under pipefail
+    if [[ $screen == *"Do you trust the contents of this directory"* ]]; then
+      herdr pane send-keys "$pane" Enter >/dev/null
+    elif [[ $screen == *"OpenAI Codex (v"* ]]; then
+      break
+    fi
+    (( i < 24 )) || { echo "codex did not reach its input screen in pane $pane" >&2; exit 1; }
+    sleep 5
+  done
+fi
+sbx exec -i -u root "$name" sh < "${0:A:h}/../lib/ensure-node-ts.sh"
+# Host branches appear as origin/<branch> inside the clone.
+sbx exec "$name" git -C "$repo" switch -qc "$branch" "origin/$base"
+sbx exec -i "$name" sh -c 'cat > /tmp/brief.md' < "$brief"
+# Return only once the agent is observably working: a wait started before then would see
+# the pre-prompt `idle` and report an untouched task as finished.
+# Codex can still be drawing its UI when it first reads idle, and drops input typed then; retry only
+# while the agent is still idle, so a prompt that did land is never sent twice.
+for try in 1 2 3; do
+  herdr agent prompt "$pane" "Read /tmp/brief.md and carry out the task in this repository. Leave your changes uncommitted." \
+    --wait --until working --until blocked --timeout 60000 >/dev/null 2>&1 && break
+  (( try < 3 )) && [[ $(herdr pane get "$pane" | jq -r .result.pane.agent_status) == idle ]] \
+    || { echo "agent in pane $pane never started working" >&2; exit 1; }
+  sleep 5
+done
+jq -nc --arg s "$name" --arg p "$pane" --arg b "$branch" '{sandbox:$s, pane:$p, branch:$b}'

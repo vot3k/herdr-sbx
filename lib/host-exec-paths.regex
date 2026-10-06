@@ -1,0 +1,1 @@
+(^|/)(\.github|\.gitea|\.husky|\.claude|\.vscode)/|\.mcp\.json|Makefile|Justfile|package\.json|Dockerfile|\.envrc|\.pre-commit

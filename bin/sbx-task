@@ -1,0 +1,14 @@
+#!/usr/bin/env zsh
+# Start an agent on a private clone of this repo (host repo stays read-only), in its own herdr tab.
+set -euo pipefail
+# The task text is typed into the agent once it starts; a sentence here would split into name + agent.
+(( $# == 1 || $# == 2 )) || { echo "usage: sbx-task <name> [agent]  (name is a slug; prompt the agent once it starts)" >&2; exit 2; }
+task=$1; agent=${2:-pi}
+[[ $task =~ '^[a-z0-9][a-z0-9-]*$' ]] || { echo "task must be lowercase letters, digits, dashes" >&2; exit 2; }
+root=$(git rev-parse --show-toplevel)
+name="${(L)root:t}-$task"
+# An agent with a kit in this repo (pi) runs from it; the rest are sbx built-ins (claude, codex, cursor).
+target=$agent; [[ -f ${0:A:h:h}/kits/$agent/spec.yaml ]] && target=${0:A:h:h}/kits/$agent
+pane=$(herdr tab create --cwd "$root" --label "$task" --focus | jq -er .result.root_pane.pane_id)
+# HERDR_AGENT: sbx hides the agent process, so herdr needs the hint to show state/notifications.
+herdr pane run "$pane" "HERDR_AGENT=$agent sbx run --clone --name $name $target .; exit"

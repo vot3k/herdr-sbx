@@ -1,0 +1,11 @@
+{
+  "name": "herdr-sbx",
+  "version": "0.2.0",
+  "description": "Run coding agents in Docker Sandboxes from herdr tabs, and orchestrate markdown plans through them to reviewed PRs.",
+  "author": {
+    "name": "Jimmy Vo",
+    "email": "jimmy_vo@me.com"
+  },
+  "repository": "https://github.com/vot3k/herdr-sbx",
+  "license": "MIT"
+}

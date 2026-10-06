@@ -1,0 +1,10 @@
+# Append to ~/.config/herdr/config.toml, then: herdr server reload-config
+
+[ui.toast]
+delivery = "system"
+
+[[keys.command]]
+key = "prefix+alt+a"
+type = "popup"
+command = "zsh -c 'read \"t?sandbox name [agent] (prompt the agent after):\" && sbx-task ${=t} || { echo \"failed, press a key\"; read -k1; }'"
+description = "agent task in sandbox (clone mode)"

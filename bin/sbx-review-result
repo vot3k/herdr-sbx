@@ -1,0 +1,37 @@
+#!/usr/bin/env zsh
+# Read a reviewer sandbox's /tmp/review.json and report only facts the orchestrator may act on:
+# {"verdict","sha_ok","findings":<count>,"blocking","minor","outside_diff","locations","relayed"}.
+# Each location is {file,line,severity} where every value is checked by code: file is kept only if
+# git says the reviewed commit changed it (else null), line is a non-negative integer or null, and
+# severity is blocking|minor|invalid. The free-text issue/fix is never printed. With a worker sandbox,
+# request_changes copies the review file into the worker's /tmp/review.md: the host moves the bytes
+# between sandboxes and never interprets them.
+set -euo pipefail
+(( $# == 4 || $# == 5 )) || { echo "usage: sbx-review-result <review-sandbox> <reviewed-sha> <worker-clone> <base> [worker-sandbox]" >&2; exit 2; }
+review=$1 expected=$2 clone=$3 base=$4 worker=${5:-}
+# The trusted vocabulary for file: paths git reports for the reviewed branch, the same list sbx-collect shows.
+changed=$(git -C "$clone" diff --name-only -z "origin/${base}...$expected" | jq -Rsc 'split("\u0000") | map(select(. != ""))')
+f=$(mktemp); trap 'rm -f "$f"' EXIT
+sbx exec "$review" cat /tmp/review.json > "$f" 2>/dev/null || { echo '{"verdict":"missing"}'; exit 1; }
+verdict=$(jq -er 'select((.verdict == "approve" or .verdict == "request_changes")
+  and (.sha | type) == "string" and (.findings | type) == "array"
+  and all(.findings[]; type == "object")) | .verdict' "$f" 2>/dev/null) \
+  || { echo '{"verdict":"invalid"}'; exit 1; }
+sha=$(jq -r .sha "$f")
+# The reviewer may cite a short sha; it must be a prefix of at least 7 characters of the one reviewed.
+[[ ${#sha} -ge 7 && $expected == ${sha}* ]] && sha_ok=true || sha_ok=false
+relayed=false
+if [[ $verdict == request_changes && -n $worker ]]; then
+  sbx exec -i "$worker" sh -c 'cat > /tmp/review.md' < "$f"; relayed=true
+fi
+jq -c --arg v "$verdict" --argjson ok $sha_ok --argjson r $relayed --argjson changed "$changed" '
+  [.findings[] | {
+    file: (.file as $p | if ($p | type) == "string" and any($changed[]; . == $p) then $p else null end),
+    line: (.line | if type == "number" and . >= 0 and . == floor then . else null end),
+    severity: (.severity | if . == "blocking" or . == "minor" then . else "invalid" end)
+  }] as $loc
+  | {verdict:$v, sha_ok:$ok, findings:($loc | length),
+     blocking:($loc | map(select(.severity == "blocking")) | length),
+     minor:($loc | map(select(.severity == "minor")) | length),
+     outside_diff:($loc | map(select(.file == null)) | length),
+     locations:$loc, relayed:$r}' "$f"

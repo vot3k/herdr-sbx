@@ -1,0 +1,23 @@
+schemaVersion: "2"
+kind: sandbox
+name: pi
+displayName: Pi (GLM)
+description: pi coding agent on z.ai GLM (glm-5.3-flash by default)
+sandbox:
+  # Docker's published pi image (docker/sbx-kits-contrib pi/Dockerfile), pinned by digest:
+  # a kit signature does not cover image tags. Bump with the digest of docker.io/sbx/pi-image:latest.
+  image: docker.io/sbx/pi-image@sha256:f588363f15ab703340769fb4ac140afa08ec660828bee20a310fd5a408478a51
+  # --approve: trust project-local pi files without a prompt; the VM is the boundary,
+  # and a prompt would leave the agent blocked under sbx-dispatch.
+  entrypoint: [pi, --approve]
+agentInstructions:
+  filename: AGENTS.md
+permissions:
+  network:
+    allow:
+      - api.z.ai:443
+      # pi fetches packages named in settings on startup.
+      - registry.npmjs.org
+# No credentials block: the z.ai key is a host-side custom secret, stored once per Mac with
+#   sbx secret set-custom --host api.z.ai --env ZAI_API_KEY --command '<prints your z.ai key>'
+# The VM sees only a placeholder in ZAI_API_KEY; the proxy swaps in the real key on api.z.ai.

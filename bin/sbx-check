@@ -1,0 +1,16 @@
+#!/usr/bin/env zsh
+# Run a check in a fresh clone-mode sandbox at <rev> of the worker repo and print only its exit code.
+# The check's output goes to <log-file>, for a human. Exits non-zero only when the environment
+# could not be set up, so a broken sandbox never reads as a failing check.
+# Like CI, the check gets a clean checkout and installs its own dependencies.
+set -euo pipefail
+(( $# == 5 )) || { echo "usage: sbx-check <worker-repo> <rev> <sandbox> <check-cmd> <log-file>" >&2; exit 2; }
+repo=${1:A} rev=$2 cs=$3 check=$4 log=$5
+sbx rm -f "$cs" >/dev/null 2>&1 || true
+git -C "$repo" branch -f "check/$cs" "$rev"   # a fresh clone sees host branches as origin/<branch>
+trap 'sbx rm -f "$cs" >/dev/null 2>&1; git -C "$repo" branch -qD "check/$cs" 2>/dev/null' EXIT
+sbx create --clone --name "$cs" shell "$repo" >/dev/null
+sbx exec -i -u root "$cs" sh < "${0:A:h}/../lib/ensure-node-ts.sh"
+sbx exec "$cs" git -C "$repo" switch -q --detach "origin/check/$cs"
+sbx exec "$cs" sh -c 'cd "$1" && eval "$2"' _ "$repo" "$check" >"$log" 2>&1 && code=0 || code=$?
+print $code
