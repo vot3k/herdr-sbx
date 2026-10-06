@@ -26,11 +26,13 @@ sbx settings set ssh.agentForwardingEnabled false && sbx daemon restart
 ## Agents
 
 The last argument of `sbx-task` and `sbx-dispatch` picks the agent. A kit under `kits/<agent>`
-wins; anything else is an sbx built-in. Logins live on the host, and the VM sees placeholders.
+wins; anything else is an sbx built-in. The included `kits/pi/` is an example configured for
+z.ai's `glm-5.3-flash`; you can use a different agent or configure your own kit. Logins live
+on the host, and the VM sees placeholders.
 
 | Agent | Role | Login, once per machine |
 |---|---|---|
-| `pi` | implementer (z.ai `glm-5.3-flash`, `kits/pi`) | `sbx secret set-custom --host api.z.ai --env ZAI_API_KEY --command '<prints your z.ai key>'`, e.g. a password manager CLI |
+| `pi` | example implementer (`kits/pi/`) | `sbx secret set-custom --host api.z.ai --env ZAI_API_KEY --command '<prints your z.ai key>'`, e.g. a password manager CLI |
 | `codex` | reviewer | `sbx secret set openai --oauth` |
 | `claude` | alternate | `/login` inside any Claude sandbox |
 | `cursor` | alternate | sign in inside any Cursor sandbox |
