@@ -38,6 +38,15 @@ sbx secret ls | grep -q 'openai'                # codex reviewer (sbx secret set
 gh auth status >/dev/null                       # opening PRs needs it
 ```
 
+When any task goes to `pi`, also check that its key works, since `sbx secret ls` only shows that one is configured. A key whose host-side source has gone stale (an expired token behind the secret command) makes pi fail every request, and herdr then reports an agent that changed nothing as `done`. Probe it through the kit, whose network policy allows z.ai, against the plan's repo checkout; anything but `200` stops the run:
+
+```bash
+kit=$(dirname "$(readlink -f "$(command -v sbx-dispatch)")")/../kits/pi
+sbx create --clone --name sbx-probe "$kit" <repo checkout> >/dev/null &&
+  sbx exec sbx-probe sh -c 'curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $ZAI_API_KEY" https://api.z.ai/api/coding/paas/v4/models'
+sbx rm -f sbx-probe >/dev/null 2>&1
+```
+
 ## 1. Read the plan and build the task graph
 
 Read the plan file the user names (format in the README, "Plan format"). `planId` is the file name without `.md`, lowercased, with anything outside `a-z0-9-` turned into `-`. From each `## Task` section take:
